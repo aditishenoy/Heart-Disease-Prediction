@@ -1,0 +1,234 @@
+# IMPORTING LIBRARIES AND DATA
+```{r setup, include=FALSE}
+#importing libraries
+library(readr)
+library(dplyr)
+library(tree)
+library(ISLR)
+library(randomForest)
+library(e1071)
+library(caret)
+library(pROC)
+
+#data import
+cleveland <- read.csv(file="processed.cleveland.csv", header = TRUE , sep = "", na.strings = "?")
+hungary <- read.csv(file="processed.hungarian.csv", header = TRUE , sep = "", na.strings = "?")
+swiss <- read.csv(file="processed.switzerland.csv", header = TRUE , sep = ",", na.strings = "?")
+va <- read.csv(file="processed.va.csv", header = TRUE , sep = ",", na.strings = "?")
+```
+
+# PREPROCESS DATA - STAGE 1
+##PREPROCESS AND REPLACE MISSING VALUES
+```{r}
+for(i in 1:ncol(cleveland))
+{
+  cleveland[is.na(cleveland[,i]), i] <- median(cleveland[,i], na.rm = TRUE)
+}
+
+for(i in 1:ncol(hungary))
+{
+  hungary[is.na(hungary[,i]), i] <- median(hungary[,i], na.rm = TRUE)
+}
+
+for(i in 1:ncol(swiss))
+{
+  swiss[is.na(swiss[,i]), i] <- median(swiss[,i], na.rm = TRUE)
+}
+
+for(i in 1:ncol(va))
+{
+  va[is.na(va[,i]), i] <- median(va[,i], na.rm = TRUE)
+}
+```
+
+
+# MERGING ALL 4 DATASETS
+```{r}
+df <- dplyr::bind_rows(cleveland %>% rename(class = num) %>% mutate(country = "Cleveland"),
+                        hungary %>% mutate(country = "Hungary"),
+                        swiss %>% mutate(country = "Switzerland"))
+```
+
+# PREPROCESS DATA - STAGE 2
+```{r}
+##CONVERT CONTINUOUS TO CATEGORICAL 
+breaks <- c(0,30, 35, 40, 50, 60, 70, 80, 90, 100, Inf)
+age_transformed <- cut(df$age,breaks = breaks, right=FALSE, labels=c(1:10))
+breaks1 <- c(0, 110, 120, 130, 140, 150, 160, Inf)
+trestbps_transformed <-cut(df$trestbps,breaks = breaks1, right=FALSE, labels=c(1:7))
+breaks2 <- c(0, 180, 200, 220, 240, 260, 280, 300, Inf)
+chol_transformed <-cut(df$chol,breaks = breaks2, right=FALSE, labels=c(1:8))
+breaks3 <- c(0, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, Inf)
+thalach_transformed <-cut(df$thalach,breaks = breaks3, right=FALSE, labels=c(1:13))
+breaks4 <- c(-10, 0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, Inf)
+oldpeak_transformed <- cut(df$oldpeak,breaks = breaks4, right=FALSE, labels=c(1:14))
+
+##REPLACE DATA WITH NEW TRANSFORMED VALUES
+for(i in 1:ncol(df))
+{
+  df$age <- age_transformed
+  df$trestbps <- trestbps_transformed
+  df$chol <- chol_transformed
+  df$thalach <- thalach_transformed
+  df$oldpeak <- oldpeak_transformed
+}
+```
+
+# CHANGE BINARY VARIABLES TO FACTORS
+```{r}
+df <- df %>% mutate(num = if_else(df$class> 0, 1, 0),
+                    age = as.factor(.$age),
+                    sex = as.factor(.$sex),
+                    cp = as.factor(.$cp),
+                    trestbps = as.factor(.$trestbps),
+                    chol = as.factor(.$chol),
+                    fbs = as.factor(.$fbs),
+                    restecg = as.factor(.$restecg),
+                    thalach = as.factor(.$thalach),
+                    exang = as.factor(.$exang),
+                    oldpeak = as.factor(.$oldpeak),
+                    slope = as.factor(.$slope),
+                    ca = as.factor(.$ca),
+                    thal = as.factor(.$thal),
+                    class = as.factor(.$class),
+                    country = as.factor(.$country))
+
+df$num = as.factor(df$num)
+
+levels(df$num) <- c("No disease","Disease")
+
+##REMOVING UNWANTED ATTRIBUTES
+df1 = subset(df, select = -c(6, 15)) 
+## CLASS 
+table(df1$num)
+df1$class <- NULL
+```
+
+# DIVIDE TRAINING AND TESTING DATA SETS
+```{r}
+library(caret)
+set.seed(527)
+train_rows <- caret::createDataPartition(df$num,p=0.7,list=FALSE)
+train_data <- df1[train_rows,]
+test_data <-  df1[-train_rows,]
+```
+
+#EVALUATION OF CLASSIFIERS BASED ON CROSS VALIDATION
+```{r}
+accuracy1 <- vector()
+precision1 <- vector()
+recall1 <- vector()
+fm1 <- vector()
+
+accuracy2 <- vector()
+precision2 <- vector()
+recall2 <- vector()
+fm2 <- vector()
+
+accuracy3 <- vector()
+precision3 <- vector()
+recall3 <- vector()
+fm3 <- vector()
+
+set.seed(3)
+datarandom<-df1[sample(nrow(df1)),] #shuffle the data
+folds <- cut(seq(1,nrow(df1)),breaks=5,labels=FALSE)
+
+#start for loop
+for (i in 1:5) 
+{
+testIndexes <- which(folds==i,arr.ind=TRUE) #we holdout one
+#fold for testing
+trainIndexes <- which(folds!=i,arr.ind=TRUE) #we train on
+#the other folds
+data_all.test <- datarandom[testIndexes, ]
+data_all.train <- datarandom[trainIndexes, ]
+
+#RANDOM FOREST
+#Use the test and train data partitions
+set.seed(3)
+rf.data <- randomForest(data_all.train$num~ ., data =
+                          data_all.train,ntree=2)
+prediction1 <- predict(rf.data, data_all.test, type="class")
+result.predicted.prob <- predict(rf.data, data_all.test, type="prob")
+
+#generate the confusion matrix
+table1 <- table(prediction1, data_all.test$num)
+precision1 <- c(precision1,table1[2,2]/(table1[2,1]+table1[2,2]))
+recall1 <- c(recall1,table1[2,2]/(table1[1,2]+table1[2,2]))
+accuracy1 <- c(accuracy1,(table1[1,1]+table1[2,2])/sum(sum(table1)))
+fm1 <- (2 * precision1 * recall1) / (precision1 + recall1)
+#AUC
+library(pROC)
+roc_obj <- roc(data_all.test$num, prediction1)
+auc1 <- auc(roc_obj)
+
+#LOGISTIC REGRESSION
+set.seed(3)
+glm_fit <- nnet::multinom(num ~ ., data=train_data)
+prediction2 <- predict(glm_fit, data_all.test, type="class")
+#generate the confusion matrix
+table2 <- table(prediction2, data_all.test$num)
+precision2 <- c(precision2,table2[2,2]/(table2[2,1]+table2[2,2]))
+recall2 <- c(recall2,table2[2,2]/(table2[1,2]+table2[2,2]))
+accuracy2 <- c(accuracy2,(table2[1,1]+table2[2,2])/sum(sum(table2)))
+fm2 <- (2 * precision2 * recall2) / (precision2 + recall2)
+
+#SUPPORT VECTOR MACHINE
+set.seed(3)
+svm.data <- svm(data_all.train$num~ ., data =
+                          data_all.train,kernel ="linear")
+prediction3 <- predict(svm.data, data_all.test, type="class")
+
+#generate the confusion matrix
+table3 <- table(prediction3, data_all.test$num)
+precision3 <- c(precision3,table3[2,2]/(table3[2,1]+table3[2,2]))
+recall3 <- c(recall3,table3[2,2]/(table3[1,2]+table3[2,2]))
+accuracy3 <- c(accuracy3,(table3[1,1]+table3[2,2])/sum(sum(table3)))
+fm3 <- (2 * precision3 * recall3) / (precision3 + recall3)
+#end for loop
+}
+
+print ("Values for Random Forest")
+accuracyaverage1 = mean(accuracy1)
+accuracyaverage1
+
+precisionaverage1 = mean(precision1)
+precisionaverage1
+
+recallaverage1 = mean(recall1)
+recallaverage1
+
+fmaverage1 = mean(fm1)
+fmaverage1
+
+rocaverage1 = mean(roc1)
+rocmaverage1
+
+print ("Values for Logistic Regression")
+accuracyaverage2 = mean(accuracy2)
+accuracyaverage2
+
+precisionaverage2 = mean(precision2)
+precisionaverage2
+
+recallaverage2 = mean(recall2)
+recallaverage2
+
+fmaverage2 = mean(fm2)
+fmaverage2
+
+print ("Values for Support Vector Machine")
+accuracyaverage3 = mean(accuracy3)
+accuracyaverage3
+
+precisionaverage3 = mean(precision3)
+precisionaverage3
+
+recallaverage3 = mean(recall3)
+recallaverage3
+
+fmaverage3 = mean(fm3)
+fmaverage3
+```
+
