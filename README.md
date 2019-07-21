@@ -1,1 +1,1 @@
-
+## This project was developed as a part of the course 'Project management and tools for health informatics' at Stockholm University under the Global Master's in Health Informatics Programme. This programme was a joint collaboration between Karolinska Institutet and Stockholm University in Sweden. 
